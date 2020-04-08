@@ -1,0 +1,550 @@
+---
+title: 'CSCI E-63C: Final Exam'
+output:
+  html_document:
+    toc: true
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Preface
+
+For the final exam/project we will develop classification models using several approaches and compare their performance on a new dataset -- so-called "Census Income" from UCI ML.  It is available at UCI ML web site, but so that we are not at the mercy of UCI ML availability, there is also a local copy of it in our website in Canvas as a zip-archive of all associated files.  Among other things, the description for this dataset also presents performance (prediction accuracy) observed by the dataset providers using variety of modeling techniques -- this supplies a context for the errors of the models we will develop here.
+
+Please note that the original data has been split up into training and test subsets, but there doesn't seem to be anything particular about that split, so we might want to pool those two datasets together and split them into training and test as necessary ourselves. As you do that, please check that the attribute levels are consistent between those two files.  For instance, the categorized income levels are indicated using slightly different notation in their training and test data.   By now it should be quite straightforward for you to correct that when you pool them together.
+
+Also, please note that there is non-negligible number of rows with missing values that for most analyses cannot be included without modification in the computation.  Please decide how you want to handle them and proceed accordingly.  The simplest and perfectly acceptable approach would be to exclude those observations from the rest of the analyses, but if you have time and inclination to investigate the impact of imputing them by various means, you are welcome to try.
+
+Attribute called "final weight" in the dataset description represents demographic weighting of these observations.  Please disregard it for the purposes of this assignment.
+
+Additionally, several attributes in this dataset are categorical variables with more than two levels (e.g. native country, occupation, etc.).  Please make sure to translate them into corresponding sets of dummy indicator variables for the methods that require such conversion (e.g. PCA) -- R function `model.matrix` can be convenient for this, instead of generating those 0/1 indicators for each level of the factor manually (which is still perfectly fine).  Some of those multi-level factors contain very sparsely populated categories -- e.g. occupation "Armed-Forces" or work class "Never-worked" -- it is your call whether you want to keep those observations in the data or exclude also on the basis that there is not enough data to adequately capture the impact of those categories. Feel free to experiment away!
+
+Among the multi-level categorical attributes, native country attribute has the largest number of levels -- several folds higher than any other attribute in this dataset -- some of which have relatively few observations.  This associated increase in dimensionality of the data may not be accompanied by a corresponding gain of resolution -- e.g. would we expect this data to support the *difference* in income between descendants from Peru and Nicaragua, for example, or from Cambodia and Laos?  Please feel free to evaluate the impact of inclusion and/or omission of this attribute in/from the model and/or discretizing it differently (e.g. US/non-US, etc.).
+
+Lastly, the size of this dataset can make some of the modeling techniques run slower than what we were typically encountering in this class.  You may find it helpful to do some of the exploration and model tuning on multiple random samples of smaller size as you decide on useful ranges of parameters/modeling choices, and then only perform a final run of fully debugged and working code on the full dataset.
+
+
+```{r}
+library(ggplot2)
+library(reshape2)
+library(ggfortify)
+library(gridExtra)
+library(grid)
+library(lattice)
+library(plyr)
+library(randomForest)
+library(ISLR)
+library(e1071)
+library(class)
+
+```
+
+# Problem 1: univariate and unsupervised analysis (20 points)
+
+Download and read "Census Income" data into R and prepare graphical and numerical summaries of it: e.g. histograms of continuous attributes, contingency tables of categorical variables, scatterplots of continuous attributes with some of the categorical variables indicated by color/symbol shape, etc.  Perform principal components analysis of this data (do you need to scale it prior to that? how would you represent multilevel categorical attributes to be used as inputs for PCA?) and plot observations in the space of the first few principal components with subjects' gender and/or categorized income indicated by color/shape of the symbol.  Perform univariate assessment of associations between outcome we will be modeling and each of the attributes (e.g. t-test or logistic regression for continuous attributes, contingency tables/Fisher exact test/$\chi^2$ test for categorical attributes).  Summarize your observations from these assessments: does it appear that there is association between outcome and predictors? Which predictors seem to be more/less relevant?
+
+## Answer 1
+
+```{r fig.width=8, fig.height=8}
+err=NULL
+colnames <- c("Age","WorkClass","FnlWgt","Education","EducationNum","MaritalStatus","Occupation","Relationship","Race","Sex","CapitalGain","CapitalLoss","HoursPerWeek","NativeCountry","Income")
+# adltTrn <- read.table("adult.data",sep=",",na.strings=" ?",col.names = colnames,stringsAsFactors = TRUE )
+# adltTst <- read.table("adult.test",sep=",",na.strings=" ?",col.names = colnames,stringsAsFactors = TRUE)
+adltTrn <- read.table("adult.data",sep=",",na.strings=" ?",stringsAsFactors = TRUE )
+adltTst <- read.table("adult.test",sep=",",na.strings=" ?",stringsAsFactors = TRUE,skip=1)
+adltTrn=na.omit(adltTrn)
+adltTst=na.omit(adltTst)
+
+nrow(adltTrn)+nrow(adltTst)
+
+census=rbind(adltTrn,adltTst)
+colnames(census)=colnames
+```
+
+```{r}
+
+levels(census[,'Income'])
+
+```
+show duplication. So will remove one with K. in it.
+```{r}
+##Fix Levels in Predictor Income 
+levels(census[,'Income'])[levels(census$Income)==' <=50K.']=' <=50K'
+levels(census[,'Income'])[levels(census$Income)==' >50K.']=' >50K'
+levels(census[,'Income'])
+
+```
+```{r}
+# Look at some low qty records that can be removed
+table(census[,'WorkClass'])
+table(census[,'Occupation'])
+table(census[,'NativeCountry'])
+
+```
+
+```{r}
+#Bsed on above I will remove Never-worked and Without pay and Armed forces and combine countries as US and Others
+
+
+census = census[!(as.numeric(census$WorkClass)) %in% which(table(census$WorkClass)==21),]
+census = census[!(as.numeric(census$WorkClass)) %in% which(table(census$WorkClass)==0),]
+census = census[!(as.numeric(census$Occupation)) %in% which(table(census$Occupation)==14),]
+census$Occupation = factor(census$Occupation)
+census$WorkClass = factor(census$WorkClass)
+levels(census[,'NativeCountry'])[levels(census$NativeCountry)!=' United-States']=' Other'
+table(census[,'NativeCountry'])
+nrow(census)
+census$FnlWgt=NULL
+census$EducationNum=NULL
+nrow(census)
+```
+
+
+
+
+```{r fig.width=8, fig.height=8}
+nums <- sapply(census, is.numeric)
+censusNum=census[,nums]
+censusCat=census[,-nums]
+
+ggplot(melt(censusNum),aes(x=value)) + geom_histogram() + facet_wrap(~variable,nrow=2,scales="free")
+pairs(censusNum,col=censusCat[,"Education"],main="Category Education")
+pairs(censusNum,col=censusCat[,"MaritalStatus"],main="Category Marital Status")
+pairs(censusNum,col=censusCat[,"Occupation"],main="Category Occupation")
+pairs(censusNum,col=censusCat[,"Relationship"],main="Category Relationship")
+pairs(censusNum,col=censusCat[,"Race"],main="Category Race")
+pairs(censusNum,col=censusCat[,"Sex"],main="Category Sex")
+pairs(censusNum,col=censusCat[,"NativeCountry"],main="Category Native Country")
+pairs(censusNum,col=censusCat[,"Income"],main="Category Makes 50K")
+
+
+attach(censusCat)
+chisq.test(table(Education,Income))
+chisq.test(table(`MaritalStatus`,Income))
+chisq.test(table(Occupation,Income))
+chisq.test(table(Relationship,Income))
+chisq.test(table(Race,Income))
+chisq.test(table(`NativeCountry`,Income))
+chisq.test(table(WorkClass,Income))
+
+attach(censusNum)
+t.test(Age,CapitalGain)
+t.test(Age,HoursPerWeek)
+```
+Based on t and Chi-sq tests, each of the variables is significant
+
+```{r,warning=FALSE}
+X=model.matrix(Income~0+.,census)
+prcomp.pca <- prcomp(X)
+pr.out=prcomp(t(X))
+biplot(pr.out, scale=0)
+```
+For this plot I suppressed the errors. It is obvious by looking at the plot that the input needs to be scaled.
+
+
+```{r,fig.width=12,fig.height=6}
+old.par <- par(mfrow=c(1,2),ps=16)
+X=model.matrix(Income~0+.,census)
+X.scale=scale(X)
+prcomp.pca <- prcomp(X.scale)
+
+
+
+#plot(prcomp(X.scale)$x[,1:2],col=adlt$Education)
+#legend('topright', legend = levels(adlt$Education), col = 1:3, cex = 0.8, pch = 1)
+
+plot(prcomp(X.scale)$x[,1:2],col=census$Sex)
+legend('topright', legend = levels(census$Sex), col = 1:3, cex = 0.8, pch = 1)
+
+plot(prcomp(X.scale)$x[,1:2],col=census$Income)
+legend('topright', legend = levels(census$Income), col = 1:3, cex = 0.8, pch = 1)
+
+
+
+#autoplot(prcomp(X.scale) ,data= census, colour='Sex')
+
+```
+
+
+
+# Problem 2: logistic regression (25 points)
+
+Develop logistic regression model of the outcome as a function of multiple predictors in the model.  Which variables are significantly associated with the outcome?  Test model performance on multiple splits of data into training and test subsets, summarize it in terms of accuracy/error, sensitivity/specificity and compare to the performance of other methods reported in the dataset description.
+
+## Answer 2: logistic regression (25 points)
+
+```{r}
+glmRes <- glm(Income~.,data=census,family=binomial)
+#summary(glmRes)
+sigFactors = data.frame(SortedSignificance=sort(signif(glmRes$coefficients,3),decreasing = TRUE))
+sigFactors
+```
+
+Variables significantly associated are shown above. Removing any family assoication, Education is way at top, although PhD and Prof. School are kind of tied.
+
+
+```{r}
+
+assess.prediction= function(truth, predicted) {
+  # check for missing values (we are going to
+  # compute metrics on non-missing values only)
+  predicted = predicted[ ! is.na(truth) ]
+  truth = truth[ ! is.na(truth) ]
+  truth = truth[ ! is.na(predicted) ]
+  predicted = predicted[ ! is.na(predicted) ]
+  
+  # how predictions align against known # training/testing outcomes:
+  # TP/FP= true/false positives,
+  # TN/FN=true/false negatives
+  TP = sum(truth==1 & predicted==1)
+ 
+  TN = sum(truth==0 & predicted==0)
+  FP = sum(truth==0 & predicted==1)
+  FN = sum(truth==1 & predicted==0)
+  P = TP+FN # total number of positives in the truth data
+  N = FP+TN  # total number of negatives
+
+  accuracy <- signif(sum(truth==predicted)*100/length(truth), 3)
+  error <- 100-accuracy
+  sensitivity <- signif(100*TP/P, 3)
+  TNR <- signif(100*TN/N, 3)
+  PPV <- signif(100*TP/(TP+FP), 3)
+  FDR <- signif(100*FP/(TP+FP), 3)
+  specificity <- signif(100*FP/N, 3)
+  specificity=1-specificity
+  
+  return(
+  data.frame(
+      accuracy,
+      error,
+      sensitivity,
+      specificity
+    )
+  )
+}
+```
+
+
+```{r}
+nTries <- 20
+metrics<-NULL
+for ( iTry in 1:nTries ) {
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census)))
+    glm.fits=glm(Income~.,data=census[train,],family=binomial)
+    glm.probs=predict(glm.fits,newdata=census[!train,],type="response")
+    glm.pred=ifelse(glm.probs>.5,1,0)
+    metrics <- rbind(metrics,cbind.data.frame(assess.prediction(as.numeric(census[!train,"Income"])-1,glm.pred), method = "LogReg", sim = iTry))
+}
+library(reshape2)
+met2=melt(metrics,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+
+Accuracy=mean(metrics[,1])
+Error=mean(metrics[,2])
+Sensitivity=mean(metrics[,3])
+Specificity=100-mean(metrics[,4])
+Accuracy
+Error
+Sensitivity
+Specificity
+```
+Here are details from the dataset description:
+Error Accuracy reported as follows, after removal of unknowns from | train/test sets):
+C4.5 : 84.46+-0.30
+Naive-Bayes: 83.88+-0.30
+NBTree : 85.90+-0.28
+
+The average accuarcy reporte by LR is 84.73% and error of 15.27%. So it is comparable to  C4.5 and NBTree and therefore in general close to the errors reported in the datase.
+
+# Problem 3: random forest (25 points)
+
+Develop random forest model of the categorized income. Present variable importance plots and comment on relative importance of different attributes in the model.  Did attributes showing up as more important in random forest model also appear as significantly associated with the outcome by logistic regression?  Test model performance on multiple splits of data into training and test subsets, compare test and out-of-bag error estimates, summarize model performance in terms of accuracy/error, sensitivity/specificity and compare to the performance of other methods re
+ported in the dataset description.
+
+## Answer 3: random forest (25 points)
+```{r, eval=FALSE}
+train <- sample(c(FALSE,TRUE),nrow(census),replace=TRUE)
+# Fit random forest to train data, obtain test error:
+rfRes <- randomForest(Income~.,census[train,])
+rfTmpTbl <- table(census[!train,"Income"],predict(rfRes,newdata=census[!train,]))
+
+
+rf.census <- randomForest(Income~.,data=census,importance=TRUE)
+importance(rf.census)
+varImpPlot(rf.census)
+partialPlot(rf.census,x.var="Education",pred.data = census)
+partialPlot(rf.census,x.var="CapitalGain",pred.data = census)
+partialPlot(rf.census,x.var="NativeCountry",pred.data = census)
+```
+```{r}
+
+
+nTries <- 20
+#metrics<-NULL
+for ( iTry in 1:nTries ) {
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census)))
+    rfRes <-(randomForest(Income~.,census[train,]))
+    rfTestPred <- (predict(rfRes,newdata=census[!train,-grep("Income",colnames(census))]))
+    rfTmpTbl <- table(census[!train,"Income"],rfTestPred)
+    oobError = mean(rfRes$err.rate[,1])
+    #print(as.numeric(rfTestPred))
+    y=as.numeric(census[!train,"Income"])-1
+    z=as.numeric(rfTestPred)-1
+    metrics <- rbind(metrics,cbind.data.frame(assess.prediction(y,z), method = "RF", sim = iTry))
+    
+}
+library(reshape2)
+met2=melt(metrics,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+
+Accuracy=mean(metrics[,1])
+Error=mean(metrics[,2])
+Sensitivity=mean(metrics[,3])
+Specificity=100-mean(metrics[,4])
+print(oobError)
+
+
+```
+
+
+
+
+# Problem 4: SVM (25 points)
+
+Develop SVM model of this data choosing parameters (e.g. choice of kernel, cost, etc.) that appear to yield better performance.  Test model performance on multiple splits of data into training and test subsets, summarize model performance in terms of accuracy/error, sensitivity/specificity and compare to the performance of other methods reported in the dataset description.
+
+##  Answer Problem 4: SVM (25 points)
+```{r}
+census1k=census[2000:3000,]
+census2k=census[1000:3000,]
+census4k=census[20000:24000,]
+
+set.seed(1)
+```
+
+```{r}
+cdata=census1k
+tune.out=tune(svm,Income~.,data=cdata,kernel="linear",ranges=list(cost=c(0.1,0.2,0.5,1,2,5,10)))
+
+summary(tune.out)
+
+```
+for 4k subset and list(cost=c(0.1,1,10,100,1000) linear I got cost=10. For the 2k sample with costs shown optimal was also 10 so I am going to stick with 2k size going forward
+
+```{r}
+nTries <- 10
+#metrics<-NULL
+
+for ( iTry in 1:nTries ) {
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census)))
+    svmfit <-  svm(Income~.,census[train,],kernel="linear",cost=10)
+    svmTestPred <-predict(svmfit,newdata=census[!train,])
+    
+    y=as.numeric(census[!train,"Income"])-1
+    z=as.numeric(svmTestPred)-1
+    metrics <- rbind(metrics,cbind.data.frame(assess.prediction(y,z), method = "SVM Lin", sim = iTry))
+    
+}
+library(reshape2)
+met2=melt(metrics,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+Accuracy=mean(metrics[,1])
+Error=mean(metrics[,2])
+Sensitivity=mean(metrics[,3])
+Specificity=100-mean(metrics[,4])
+Accuracy
+Error
+Sensitivity
+Specificity
+
+```
+
+```{r}
+cdata=census1k
+tune.out=tune(svm,Income~.,data=cdata,kernel="radia",ranges=list(cost=c(0.1,0.2,0.5,1,2,5,10),gamma=c(0.01,0.02,0.05,0.1)))
+summary(tune.out)
+
+```
+
+for 2k subset and list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4))) I got cost=2 gamma=0.05 and for 4k I got cost=1 gamma=.5 I will use2k
+```{r}
+nTries <- 10
+#metrics<-NULL
+
+for ( iTry in 1:nTries ) {
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census)))
+    svmfit <-  svm(Income~.,census[train,],kernel="polynomial",gamma=0.05,cost=2)
+    svmTestPred <-predict(svmfit,newdata=census[!train,])
+    
+    y=as.numeric(census[!train,"Income"])-1
+    z=as.numeric(svmTestPred)-1
+    metrics <- rbind(metrics,cbind.data.frame(assess.prediction(y,z), method = "SVM Radial", sim = iTry))
+    
+}
+met2=melt(metrics,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+Accuracy=mean(metrics[,1])
+Error=mean(metrics[,2])
+Sensitivity=mean(metrics[,3])
+Specificity=100-mean(metrics[,4])
+Accuracy
+Error
+Sensitivity
+Specificity
+```
+
+```{r}
+cdata=census1k
+tune.out=tune(svm,Income~.,data=cdata,kernel="polynomial",ranges=list(cost=c(0.1,0.2,0.5,1,2,5,10),gamma=c(0.01,0.02,0.05,0.1)))
+summary(tune.out)
+
+```
+
+for 2k subset and list(cost=c(0.1,1,10,100,1000),gamma=c(0.5,1,2,3,4))) I got cost=2 gamma=0.1 and for 4k I got cost=1 gamma=.5 I will use 4k
+```{r}
+nTries <- 10
+#metrics<-NULL
+
+for ( iTry in 1:nTries ) {
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census)))
+    svmfit <-  svm(Income~.,census[train,],kernel="polynomial",gamma=0.1,cost=2)
+    svmTestPred <-predict(svmfit,newdata=census[!train,])
+    
+    y=as.numeric(census[!train,"Income"])-1
+    z=as.numeric(svmTestPred)-1
+    metrics <- rbind(metrics,cbind.data.frame(assess.prediction(y,z), method = "SVM Polynomial", sim = iTry))
+    
+}
+met2=melt(metrics,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+Accuracy=mean(metrics[,1])
+Error=mean(metrics[,2])
+Sensitivity=mean(metrics[,3])
+Specificity=100-mean(metrics[,4])
+Accuracy
+Error
+Sensitivity
+Specificity
+```
+
+
+```{r}
+
+
+```
+
+# Problem 5: compare logistic regression, random forest and SVM model performance (5 points)
+
+Compare performance of the models developed above (logistic regression, random forest, SVM) in terms of their accuracy, error and sensitivity/specificity.  Comment on differences and similarities between them.
+
+## Answer 5
+
+The comparision has been done at each simulation above. Generally speaking, the best performance I get is with that of RF and the worst is SVM Linear. RF also has the best sensitivity 
+
+
+
+
+# Extra 10 points: KNN model
+
+Develop KNN model for this data, evaluate its performance for different values of $k$ on different splits of the data into training and test and compare it to the performance of other methods reported in the dataset description.  Notice that this dataset includes many categorical variables as well as continuous attributes measured on different scales, so that the distance has to be defined to be meaningful (probably avoiding subtraction of the numerical values of multi-level factors directly or adding differences between untransformed age and capital gain/loss attributes).
+
+## Answer Extra 10 points: KNN model
+
+
+```{r}
+
+dfTmp <- NULL
+# 
+# knn.data=data.frame(model.matrix(Income~0+.,census), Income=census$Income)
+# knn.no.income= knn.data[,colnames(knn.data) != "Income"]
+# knn.s= data.frame(scale(knn.no.income),Income=knn.data$Income)
+
+knn.s=model.matrix(~0+.,census)
+knn.s=scale(knn.s)
+
+```
+
+```{r}
+bTrain <- sample(c(FALSE,TRUE),nrow(knn.s),replace=TRUE)
+# Fit KNN model at several levels of k:
+
+knn.s=model.matrix(~0+.,census)
+knn.s=scale(knn.s)
+dfTmp <- NULL
+for ( kTmp in floor(1.2^(1:5)) ) {
+  knnRes <- knn(knn.s[bTrain,],knn.s[!bTrain,],knn.s[bTrain,ncol(knn.s)],k=kTmp)
+  tmpTbl <- table(knn.s[bTrain,ncol(knn.s)][!bTrain],knnRes)
+  dfTmp <- rbind(dfTmp,data.frame(err=1-sum(diag(tmpTbl))/sum(tmpTbl),k=kTmp))
+}
+#ggplot(dfTmp,aes(x=k,y=err))+geom_point()+scale_x_log10()+geom_hline(aes(yintercept = err,colour=type),data=data.frame(type=c("LDA","RF"),err=c(1-sum(diag(ldaTmpTbl))/sum(ldaTmpTbl),1-sum(diag(rfTmpTbl))/sum(rfTmpTbl))))+ggtitle("KNN error rate")
+plot(err~k,dfTmp)
+
+```
+```{r}
+
+nTries <- 10
+metricsK<-NULL
+
+for ( iTry in 1:nTries ) {
+  
+  for ( kTmp in c(1,2,10) ) {
+  #for ( kTmp in c(1,2,5,10,20,50,100) ) {
+
+    train <- sample(rep(c(TRUE,FALSE),length.out=nrow(knn.s)))
+    #svmfit <-  knn(knn.s[bTrain,],knn.s[!bTrain,],knn.s[bTrain,ncol(knn.s)],k=kTmp)
+    svmTestPred <-knn(knn.s[train,],knn.s[!train,],as.factor(as.numeric(census$Income[train])),k=kTmp)
+    y=as.numeric(census$Income[!train])-1
+    z=as.numeric(svmTestPred)-1
+    metricsK <- rbind(metricsK,cbind.data.frame(assess.prediction(y,z), method = "KNN" , K = kTmp))
+  }
+    
+}
+met2=melt(metricsK,id.vars='method',measure.vars=c('accuracy','error','sensitivity','specificity'))
+ggplot(met2,aes(x=method,y=value,colour=variable))+geom_boxplot()
+Accuracy=mean(metricsK[,1])
+Error=mean(metricsK[,2])
+Sensitivity=mean(metricsK[,3])
+Specificity=100-mean(metricsK[,4])
+Accuracy
+Error
+Sensitivity
+Specificity
+```
+
+
+
+# Extra 15 points: variable importance in SVM
+
+SVM does not appear to provide readily available tools for judging relative importance of different attributes in the model.  Please evaluate here an approach similar to that employed by random forest where importance of any given attribute is measured by the decrease in model performance upon randomization of the values for this attribute.
+
+
+```{r}
+metricsSVMimp=NULL
+dfSVMFinal = NULL
+for(rmCol in c(1:12)){
+  train <- sample(rep(c(TRUE,FALSE),length.out=nrow(census1k)))
+  svmItune<-tune(svm,Income~.,data=census1k[train,-rmCol],kernel="linear",tunecontrol=tune.control(cross=5),cost=0.1)
+  svmIPred<-predict(svmItune$best.model,newdata=census1k[!train,-rmCol])
+  y=as.numeric(census1k[!train,"Income"])-1
+    z=as.numeric(svmIPred)-1
+    metricsSVMimp <- rbind(metricsSVMimp,cbind.data.frame(assess.prediction(y,z), method = "SVM Importan Variable","ColRemoved"=rmCol, sim = iTry))
+ 
+}
+plot(metricsSVMimp[,"ColRemoved"],metricsSVMimp[,"error"],ylab = " Percentage error",xlab="Column Removed")
+
+```
+# Answer 15 points: variable importance in SVM
+Employing a similar kind of logic as used in stepwise LR, one could add or subtract selecviely columns to the predictors and  see which column leads to a decrease in overall error. Shown above is a partial result that just does a linear removal, one at a time of columns. Trains the model and picks the best model by doing CV and then takes the %error. So one coul add columns that result in optimization of the error at each stage. this model can be perfected by making sure that the subset of data actually is represntative of the outcome. For example, if the orignal data has ratio of 30:60 for outcome > or <50, then we can ensure that sub samples are in that same ratio
+
+
+
+
+
+
+
+
+
+
+`
